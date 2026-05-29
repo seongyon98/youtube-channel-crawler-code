@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from src.filters import is_education_channel, is_korean_text, make_safe_filename, has_exclude_keyword
 from src.contact import extract_contact_info
 from src.ai_filter import review_channel_with_ai
-from src.config import USE_OPENAI_FILTER
+from src.config import USE_OPENAI_FILTER, PRIORITY_KEYWORDS
 
 DATA_DIR = 'data'
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -384,6 +384,16 @@ class YouTubeChannelCrawler:
                         print(f"  ✅ AI 검수 통과")
 
                 # 3. 수집 확정
+                # 우선 검수 키워드가 소개란에 포함되어 있는지 확인 (신규 채널에만 최초 적용)
+                desc = details.get('description', '')
+                if any(kw in desc for kw in PRIORITY_KEYWORDS):
+                    title = details.get('title', '')
+                    if not title.startswith('⭐ [우선검수]'):
+                        details['title'] = f"⭐ [우선검수] {title}"
+                    details['priority_review'] = True
+                else:
+                    details['priority_review'] = False
+
                 print(f"\n✓ [검색 {search_count}회] 새 채널 추가: {details['title']}")
                 details['collected_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 details['search_keyword'] = query
@@ -426,6 +436,53 @@ class YouTubeChannelCrawler:
         return all_channels, data_file, len(new_channels)
 
     def save_to_json(self, channels, filename='youtube_channels.json'):
+        processed_channels = []
+        for ch in channels:
+            ch_copy = ch.copy()
+            if 'priority_review' not in ch_copy:
+                ch_copy['priority_review'] = False
+
+            # 정의된 일관된 키 순서
+            key_order = [
+                'channel_id', 'title', 'description', 'custom_url', 'published_at',
+                'last_upload_date', 'country', 'is_korean', 'subscriber_count',
+                'video_count', 'view_count', 'channel_url', 'custom_channel_url',
+                'email', 'phone', 'kakao', 'other_links', 'contactable', 'thumbnail',
+                'latest_video_id', 'latest_video_title', 'latest_video_thumb',
+                'collected_date', 'search_keyword', 'priority_review'
+            ]
+
+            ordered_ch = {}
+            # 1. 정의된 순서대로 키 배치
+            for key in key_order:
+                if key in ch_copy:
+                    ordered_ch[key] = ch_copy.pop(key)
+                elif key == 'priority_review':
+                    ordered_ch[key] = False
+
+            # 2. 혹시나 정의되지 않은 추가 키가 있다면 중간에 삽입 (priority_review 등 trailing 키보다 앞에 오도록)
+            # 단, trailing 키들인 'collected_date', 'search_keyword', 'priority_review'는 항상 맨 마지막에 오도록 보장
+            trailing_keys = ['collected_date', 'search_keyword', 'priority_review']
+
+            # trailing 키들을 임시로 뺀 상태로 남은 키들을 ordered_ch에 추가
+            remaining_trailing = {}
+            for tk in trailing_keys:
+                if tk in ordered_ch:
+                    remaining_trailing[tk] = ordered_ch.pop(tk)
+
+            # 혹시 pop하고 남은 ch_copy의 미정의 키들 추가
+            for k, v in ch_copy.items():
+                ordered_ch[k] = v
+
+            # trailing 키들을 맨 마지막에 다시 붙임
+            for tk in trailing_keys:
+                if tk in remaining_trailing:
+                    ordered_ch[tk] = remaining_trailing[tk]
+                elif tk == 'priority_review':
+                    ordered_ch[tk] = False
+
+            processed_channels.append(ordered_ch)
+
         with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(channels, f, ensure_ascii=False, indent=2)
+            json.dump(processed_channels, f, ensure_ascii=False, indent=2)
         print(f"✓ JSON 파일 저장: {filename}")

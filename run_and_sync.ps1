@@ -1,6 +1,19 @@
 # Set Working Directory
 Set-Location $PSScriptRoot
 
+# --- Duplicate Run Prevention (Lock File) ---
+$LOCK_FILE = "$PSScriptRoot/.crawler.lock"
+if (Test-Path $LOCK_FILE) {
+    $old_pid = Get-Content $LOCK_FILE -ErrorAction SilentlyContinue
+    if ($old_pid -and (Get-Process -Id $old_pid -ErrorAction SilentlyContinue)) {
+        Write-Host "⚠️ 이미 다른 크롤러 인스턴스(PID: $old_pid)가 실행 중입니다." -ForegroundColor Yellow
+        Write-Host "중복 실행을 방지하기 위해 이 창을 종료합니다." -ForegroundColor Yellow
+        Start-Sleep -Seconds 3
+        exit 0
+    }
+}
+$PID | Out-File -FilePath $LOCK_FILE -Encoding UTF8 -Force
+
 # --- Logging Start ---
 $LOG_DIR = "$PSScriptRoot/logs"
 if (!(Test-Path $LOG_DIR)) { New-Item -Path $LOG_DIR -ItemType Directory | Out-Null }
@@ -75,6 +88,13 @@ try {
     }
 }
 finally {
+    # Remove Lock File
+    if (Test-Path $LOCK_FILE) {
+        $stored_pid = Get-Content $LOCK_FILE -ErrorAction SilentlyContinue
+        if ($stored_pid -eq $PID) {
+            Remove-Item $LOCK_FILE -Force -ErrorAction SilentlyContinue
+        }
+    }
     # --- Logging End ---
     Stop-Transcript
 }
